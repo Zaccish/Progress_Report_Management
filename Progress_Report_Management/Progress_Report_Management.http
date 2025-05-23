@@ -1,0 +1,6 @@
+@Progress_Report_Management_HostAddress = http://localhost:5199
+
+GET {{Progress_Report_Management_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

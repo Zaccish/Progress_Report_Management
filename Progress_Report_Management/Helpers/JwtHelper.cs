@@ -1,61 +1,43 @@
-﻿using Microsoft.IdentityModel.Tokens;
+﻿using System;
+using System.Collections.Generic;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
+using Microsoft.Extensions.Configuration;
+using Microsoft.IdentityModel.Tokens;
+using ProgressReportSystem.API.Models;
 
-public class JwtHelper
+namespace ProgressReportSystem.API.Helpers;
+
+public static class JwtHelper
 {
-    private readonly IConfiguration _config;
-
-    public JwtHelper(IConfiguration config)
+    public static string GenerateJwtToken(User user, IConfiguration config)
     {
-        _config = config;
-    }
+        var jwtSettings = config.GetSection("JwtSettings");
+        var secretKey = jwtSettings.GetValue<string>("SecretKey")!;
+        var issuer = jwtSettings.GetValue<string>("Issuer")!;
+        var audience = jwtSettings.GetValue<string>("Audience")!;
+        var expiry = jwtSettings.GetValue<int>("ExpiryMinutes");
 
-    // Original method (still useful for simple cases)
-    public string GenerateToken(string username, string role, string matid)
-    {
-        var claims = new[]
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secretKey));
+        var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+
+        // Include MatricId so StudentController can verify ownership
+        var claims = new List<Claim>
         {
-        new Claim(ClaimTypes.Name, username),
-        new Claim(ClaimTypes.Role, role),
-        new Claim(ClaimTypes.NameIdentifier, matid) // Store MATID for later use
-    };
-
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_config["Jwt:Key"]!));
-        var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
-
-        var token = new JwtSecurityToken(
-            issuer: _config["Jwt:Issuer"],             // "ProgressReportAPI"
-            audience: _config["Jwt:Audience"],         // Must be "ProgressReportAPIUsers"
-            claims: claims,
-            expires: DateTime.Now.AddHours(2),
-            signingCredentials: creds
-        );
-
-        return new JwtSecurityTokenHandler().WriteToken(token);
-    }
-
-
-    // ✅ New overloaded method that accepts custom claims (e.g., Student_id)
-    public string GenerateToken(Claim[] claims)
-    {
-        return GenerateTokenWithClaims(claims);
-    }
-
-    // 🔧 Shared internal token generator
-    private string GenerateTokenWithClaims(Claim[] claims)
-    {
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_config["Jwt:Key"]!));
-        var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+            new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
+            new Claim(ClaimTypes.Email, user.Email),
+            new Claim(ClaimTypes.Role, user.Role),
+            new Claim("FullName", user.FullName),
+            new Claim("MatricId", user.MatricId ?? string.Empty)
+        };
 
         var token = new JwtSecurityToken(
-            issuer: _config["Jwt:Issuer"],
-            audience: _config["Jwt:Audience"], // You can adjust if needed
+            issuer: issuer,
+            audience: audience,
             claims: claims,
-            expires: DateTime.Now.AddHours(2),
-            signingCredentials: creds
-        );
+            expires: DateTime.UtcNow.AddMinutes(expiry),
+            signingCredentials: creds);
 
         return new JwtSecurityTokenHandler().WriteToken(token);
     }

@@ -1,72 +1,54 @@
-﻿using System.Security.Claims;
-using Microsoft.AspNetCore.Authorization;
+﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.IdentityModel.Tokens;
-using ProgressReportAPI.Models;
+using ProgressReportSystem.API.DTOs;
+using ProgressReportSystem.API.Services;
+using System.Security.Claims;
 
-[Route("api/[controller]")]
+namespace ProgressReportSystem.API.Controllers;
+
 [ApiController]
-[Authorize(Roles = "Admin")]
+[Route("api/[controller]")]
+[Authorize(Roles = "Student")]
 public class StudentController : ControllerBase
 {
-    private readonly AppDbContext _context;
+    private readonly IReportService _reportService;
 
-    public StudentController(AppDbContext context)
+    public StudentController(IReportService reportService)
     {
-        _context = context;
+        _reportService = reportService;
     }
 
-    [HttpGet]
-    public IActionResult GetAll() => Ok(_context.Students.ToList());
-
-    [HttpPost]
-    [Authorize(Roles = "Admin")]
-    public IActionResult AddStudent([FromBody] Student student)
+    [HttpGet("search")]
+    public async Task<IActionResult> SearchReports([FromQuery] string? name, [FromQuery] string? matricId)
     {
-        _context.Students.Add(student);
-        _context.SaveChanges();
-        return Ok("Student added.");
+        var loggedInMatricId = User.FindFirst("MatricId")?.Value;
+
+        // Students can only search their own reports
+        if (!string.IsNullOrEmpty(matricId) && matricId != loggedInMatricId)
+            return Unauthorized("You are not allowed to access other students' reports.");
+
+        var result = await _reportService.SearchReportsAsync(name, loggedInMatricId);
+        return Ok(result);
     }
 
-    [HttpDelete("{id}")]
-    [Authorize(Roles = "Admin")]
-    public IActionResult DeleteStudent(int id)
+    [HttpPost("download")]
+    public async Task<IActionResult> DownloadReport([FromBody] DownloadRequest request)
     {
-        var student = _context.Students.Find(id);
-        if (student == null) return NotFound();
+        var loggedInMatricId = User.FindFirst("MatricId")?.Value;
 
-        _context.Students.Remove(student);
-        _context.SaveChanges();
-        return Ok("Deleted");
-    }
+        if (request.MatricId != loggedInMatricId)
+            return Unauthorized("You are not authorized to download this report.");
 
-    [HttpGet("{id}/Download")]
-    [Authorize(Roles = "Admin,Student")]
-    public async Task<IActionResult> DownloadStudentFile(int id)
-    {
-        var student = await _context.Students.FindAsync(id);
-        if (student == null)
-            return NotFound("Student not found.");
+        var result = await _reportService.DownloadReportAsync(request);
+        if (result == null) return NotFound("Report not found or validation failed.");
 
-        var userRole = User.FindFirst(ClaimTypes.Role)?.Value;
-        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-
-        if (userRole == "Student" && userIdClaim != null && student.Student_id.ToString() != userIdClaim)
+        var memory = new MemoryStream();
+        using (var stream = new FileStream(result.FilePath, FileMode.Open))
         {
-            return Forbid("Students can only download their own reports.");
+            await stream.CopyToAsync(memory);
         }
 
-        if (string.IsNullOrEmpty(student.File_path) || !System.IO.File.Exists(student.File_path))
-            return NotFound("File not found on disk.");
-
-        var fileBytes = await System.IO.File.ReadAllBytesAsync(student.File_path);
-        var fileName = student.File_name ?? "StudentReport.pdf";
-
-        return File(fileBytes, "application/pdf", fileName);
+        memory.Position = 0;
+        return File(memory, "application/octet-stream", result.FileName);
     }
-
-
-
-
-
 }
